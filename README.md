@@ -9,7 +9,7 @@ Everything the paper describes is written by hand: multi-head attention, sinusoi
 encoder-decoder, shared embeddings, the warmup learning-rate schedule, label smoothing, length-bucketed batching,
 checkpoint averaging, beam search with length penalty, BPE and BLEU. PyTorch is used for tensors, autograd and Adam.
 
-> **Status:** the main run and the ablations are training. Results are added here from the run logs when they finish.
+> **Status:** the main run is trained and scored (below). The Table 3 ablations are queued.
 
 ## Paper → code
 
@@ -36,7 +36,7 @@ checkpoint averaging, beam search with length penalty, BPE and BLEU. PyTorch is 
 | Size | d_model 512, 6 + 6 layers, 65M params | d_model 256, 4 + 4 layers, 9.4M params | One laptop GPU |
 | Vocabulary | ~37k BPE, character-level | 8k BPE, byte-level (as GPT-2) | Smaller model; bytes mean Devanagari never hits an unknown token |
 | Batch | ~25k source + 25k target tokens | ~12k padded tokens per side (3k × 4 accumulated) | Memory |
-| Training | 100k steps, 8 × P100, 12 h | 25k steps, M1 Pro | Compute |
+| Training | 100k steps, 8 × P100, 12 h | 20k steps, M1 Pro (~28k tokens/s) | Compute |
 | Language pair | En → De, En → Fr (WMT 2014) | En → Hi (IITB, WAT test set) | Hindi is the point |
 
 Label smoothing uses PyTorch's built-in, which spreads ε over all classes including padding; the paper does not
@@ -54,6 +54,30 @@ say how its implementation treats padding.
 | Dev / test (untouched) | 520 / 2,507 |
 
 The shared 8,000-token BPE is learned on 150k random training pairs.
+
+## Results
+
+English → Hindi, IITB / WAT test set (2,507 sentences), last 5 checkpoints (steps 16k–20k) averaged, beam 4,
+length penalty 0.6:
+
+| Metric | Score |
+|---|---|
+| sacreBLEU (13a tokenizer) | **12.7** |
+| chrF2 | **39.3** |
+| BLEU from [bleu.py](bleu.py) (Devanagari-aware tokenization) | 13.72 |
+
+sacreBLEU detail: n-gram precisions 47.6 / 20.7 / 9.8 / 4.8, brevity penalty 0.864 (the output is 13% shorter
+than the reference). For scale, the IITB corpus paper reports 12.23 BLEU for its En → Hi NMT system; its
+tokenization is not identical, so treat that as a reference point, not a like-for-like comparison.
+
+Training curve (dev set, 520 sentences, greedy decoding of the current weights):
+
+| Step | 2.5k | 5k | 7.5k | 10k | 12.5k | 15k | 17.5k | 20k |
+|---|---|---|---|---|---|---|---|---|
+| Dev perplexity | 122.4 | 54.8 | 28.7 | 18.9 | 15.4 | 13.8 | 12.8 | 12.1 |
+| Dev BLEU | 0.65 | 2.77 | 5.47 | 8.88 | 10.41 | 12.00 | 12.40 | 12.88 |
+
+Dev BLEU was still rising at 20k steps; a longer run would likely score higher.
 
 ## Correctness checks
 
@@ -77,7 +101,7 @@ Removing the causal mask or the padding mask makes the matching check fail.
 pip install -r requirements.txt
 python data.py                     # ~8 min: download, clean, learn BPE, encode
 python check.py
-python train.py --name base --steps 25000 --max-tokens 3000 --accum 4
+python train.py --name base --steps 20000 --max-tokens 3000 --accum 4
 python translate.py runs/base      # test set: average last 5 checkpoints, beam 4, BLEU
 python translate.py runs/base --text "Where is the railway station?"
 ./ablations.sh                     # Table 3, on a 300k-pair subset
